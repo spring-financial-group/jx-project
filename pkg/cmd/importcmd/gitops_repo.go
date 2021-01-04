@@ -3,7 +3,7 @@ package importcmd
 import (
 	"path/filepath"
 
-	"github.com/jenkins-x/jx-api/v3/pkg/config"
+	jxcore "github.com/jenkins-x/jx-api/v4/pkg/apis/core/v4beta1"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient/giturl"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/naming"
@@ -14,7 +14,7 @@ import (
 // IsGitOpsRepositoryWithPipeline returns true if we have detected a GitOps repository for Jenkins X 3.x
 func IsGitOpsRepositoryWithPipeline(dir string) (bool, error) {
 	fileNames := []string{
-		filepath.Join(dir, "jenkins-x.yml"),
+		filepath.Join(dir, ".lighthouse", "jenkins-x", "triggers.yaml"),
 		filepath.Join(dir, "versionStream", "git-operator", "job.yaml"),
 	}
 
@@ -33,7 +33,7 @@ func IsGitOpsRepositoryWithPipeline(dir string) (bool, error) {
 // allows any extra changes to be proposed to the dev environment pull request if needed
 // e.g. if a new environment git repository is imported we should ensure we have an Environment created for the new environment
 func (o *ImportOptions) modifyDevEnvironmentSource(importDir, promoteDir string, gitInfo *giturl.GitRepository, gitURL string, gitKind string) error {
-	log.Logger().Infof("checking if the new repository is an Environment: %s", gitURL)
+	log.Logger().Debugf("checking if the new repository is an Environment: %s", gitURL)
 
 	gitops, err := IsGitOpsRepositoryWithPipeline(importDir)
 	if err != nil {
@@ -43,10 +43,11 @@ func (o *ImportOptions) modifyDevEnvironmentSource(importDir, promoteDir string,
 		return nil
 	}
 
-	requirements, requirementsFileName, err := config.LoadRequirementsConfig(promoteDir, false)
+	requirementsResource, requirementsFileName, err := jxcore.LoadRequirementsConfig(promoteDir, false)
 	if err != nil {
 		return errors.Wrapf(err, "failed to load requirements file in repository %s", gitURL)
 	}
+	requirements := &requirementsResource.Spec
 	if requirements != nil && requirementsFileName != "" {
 		// lets make sure we have an environment for this  environment
 		repoOwner := gitInfo.Organisation
@@ -60,7 +61,7 @@ func (o *ImportOptions) modifyDevEnvironmentSource(importDir, promoteDir string,
 
 		// lets add a new environment
 		key := naming.ToValidName(repoName)
-		requirements.Environments = append(requirements.Environments, config.EnvironmentConfig{
+		requirements.Environments = append(requirements.Environments, jxcore.EnvironmentConfig{
 			Key:               key,
 			Owner:             repoOwner,
 			Repository:        repoName,
@@ -69,7 +70,7 @@ func (o *ImportOptions) modifyDevEnvironmentSource(importDir, promoteDir string,
 			RemoteCluster:     true,
 			PromotionStrategy: "Auto",
 		})
-		err = requirements.SaveConfig(requirementsFileName)
+		err = requirementsResource.SaveConfig(requirementsFileName)
 		if err != nil {
 			return errors.Wrapf(err, "failed to save %s", requirementsFileName)
 		}

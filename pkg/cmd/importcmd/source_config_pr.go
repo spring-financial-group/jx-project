@@ -8,6 +8,7 @@ import (
 	"github.com/jenkins-x/jx-gitops/pkg/cmd/repository/add"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/jxenv"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/stringhelpers"
+	"github.com/jenkins-x/jx-logging/v3/pkg/log"
 	"github.com/jenkins-x/jx-promote/pkg/environments"
 	"github.com/pkg/errors"
 )
@@ -20,6 +21,10 @@ func (o *ImportOptions) addSourceConfigPullRequest(gitURL string, gitKind string
 	if err != nil {
 		return errors.Wrapf(err, "failed to find the dev Environment")
 	}
+
+	log.Logger().Info("")
+	log.Logger().Info("we are now going to create a Pull Request on the development cluster git repository to setup CI/CD via GitOps")
+	log.Logger().Info("")
 
 	safeGitURL := stringhelpers.SanitizeURL(gitURL)
 
@@ -65,6 +70,7 @@ func (o *ImportOptions) addSourceConfigPullRequest(gitURL string, gitKind string
 		ao.JXClient = o.JXClient
 		ao.Namespace = o.Namespace
 		ao.Scheduler = o.SchedulerName
+		ao.Jenkins = o.Destination.Jenkins.Server
 		err := ao.Run()
 		if err != nil {
 			return errors.Wrapf(err, "failed to add git URL %s to the source-config.yaml file", safeGitURL)
@@ -93,6 +99,11 @@ func (o *ImportOptions) addSourceConfigPullRequest(gitURL string, gitKind string
 	if pr != nil {
 		prURL = pr.Link
 		if o.WaitForSourceRepositoryPullRequest {
+
+			log.Logger().Info("")
+			log.Logger().Info("we now need to wait for the Pull Request to merge so that CI/CD can be setup via GitOps")
+			log.Logger().Info("")
+
 			err = o.waitForSourceRepositoryPullRequest(pr, devGitURL)
 			if err != nil {
 				return errors.Wrapf(err, "failed to wait for the Pull Request %s to merge", prURL)

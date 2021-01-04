@@ -11,8 +11,8 @@ import (
 	"github.com/jenkins-x/jx-helpers/v3/pkg/cobras/helper"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient"
-	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient/giturl"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/options"
+	"github.com/jenkins-x/jx-helpers/v3/pkg/termcolor"
 	"github.com/jenkins-x/jx-project/pkg/cmd/common"
 	"github.com/jenkins-x/jx-project/pkg/cmd/importcmd"
 	"github.com/jenkins-x/jx-project/pkg/quickstarts"
@@ -25,6 +25,8 @@ import (
 )
 
 var (
+	info = termcolor.ColorInfo
+
 	createQuickstartLong = templates.LongDesc(`
 		Create a new project from a sample/starter (found in https://github.com/jenkins-x-quickstarts)
 
@@ -50,6 +52,7 @@ type CreateQuickstartOptions struct {
 	GitHubOrganisations []string
 	Filter              quickstarts.QuickstartFilter
 	GitHost             string
+	QuickstartAuth      string
 	IgnoreTeam          bool
 }
 
@@ -73,6 +76,7 @@ func NewCmdCreateQuickstart() (*cobra.Command, *CreateQuickstartOptions) {
 
 	cmd.Flags().StringArrayVarP(&o.GitHubOrganisations, "organisations", "g", []string{}, "The GitHub organisations to query for quickstarts")
 	cmd.Flags().StringArrayVarP(&o.Filter.Tags, "tag", "t", []string{}, "The tags on the quickstarts to filter")
+	cmd.Flags().StringVarP(&o.QuickstartAuth, "quickstart-auth", "", "", "The auth mechanism used to authenticate with the git token to download the quickstarts. If not specified defaults to Basic but could be Bearer for bearer token auth")
 	cmd.Flags().StringVarP(&o.Filter.Owner, "owner", "", "", "The owner to filter on")
 	cmd.Flags().StringVarP(&o.Filter.Language, "language", "l", "", "The language to filter on")
 	cmd.Flags().StringVarP(&o.Filter.Framework, "framework", "", "", "The framework to filter on")
@@ -203,10 +207,6 @@ func (o *CreateQuickstartOptions) CreateQuickStart(q *quickstarts.QuickstartForm
 	// Prevent accidental attempts to use ML Project Sets in create quickstart
 	gitToken := o.ScmFactory.GitToken
 
-	// lets not pass in a token if we are not using github
-	if !strings.HasPrefix(o.ScmFactory.GitServerURL, giturl.GitHubURL) {
-		gitToken = ""
-	}
 	if isMLProjectSet(q.Quickstart, currentUser, gitToken) {
 		return fmt.Errorf("you have tried to select a machine-learning quickstart projectset please try again using jx create mlquickstart instead")
 	}
@@ -278,10 +278,32 @@ func (o *CreateQuickstartOptions) createQuickstart(f *quickstarts.QuickstartForm
 		return answer, err
 	}
 
-	if token != "" && username != "" {
-		log.Logger().Debugf("Downloading Quickstart source zip from %s with basic auth for user: %s", u, username)
-		req.SetBasicAuth(username, token)
+	// lets not pass in a token if we are not using a similar service (e.g. github.com or mygitserver.com)
+	sameDomain, err := SameRootDomain(o.ScmFactory.GitServerURL, u)
+	if err != nil {
+		return answer, errors.Wrapf(err, "failed to compare domains")
 	}
+
+	if !sameDomain {
+		log.Logger().Infof("not sending git token to download quickstart from %s as its using a different domain to the git token", info(u))
+		token = ""
+	}
+
+	if token != "" {
+		auth := o.QuickstartAuth
+		lowerAuth := strings.ToLower(auth)
+		if lowerAuth == "" || lowerAuth == "basic" {
+			if username != "" {
+				log.Logger().Debugf("Downloading Quickstart source zip from %s with basic auth for user: %s", u, username)
+				req.SetBasicAuth(username, token)
+			}
+		} else {
+			log.Logger().Debugf("Downloading Quickstart source zip from %s with auth: %s", u, auth)
+			header := auth + " " + token
+			req.Header.Add("Authorization", header)
+		}
+	}
+
 	res, err := client.Do(req)
 	if err != nil {
 		return answer, err

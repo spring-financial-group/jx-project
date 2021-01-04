@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestImportTektonCatalogProject(t *testing.T) {
+func TestImportJenkinsfileProject(t *testing.T) {
 	tempDir, err := ioutil.TempDir("", "test-import-jx-gha-")
 	assert.NoError(t, err)
 
@@ -28,7 +28,7 @@ func TestImportTektonCatalogProject(t *testing.T) {
 	_, err = os.Stat(testData)
 	assert.NoError(t, err)
 
-	name := "nodejs"
+	name := "custom_jenkins"
 	srcDir := filepath.Join(testData, name)
 	assert.DirExists(t, srcDir, "source dir does not exist")
 
@@ -41,31 +41,25 @@ func TestImportTektonCatalogProject(t *testing.T) {
 
 	testimports.SetFakeClients(t, o)
 
+	o.BatchMode = true
 	o.Dir = testDir
 	o.DisableMaven = true
 	o.UseDefaultGit = true
 	o.WaitForSourceRepositoryPullRequest = false
 
-	o.Destination.JenkinsX.Enabled = true
 	callback := func(env *v1.Environment) error {
+		env.Spec.Source.URL = "https://fake.git/jenkins-x-labs-bdd-tests/jx3-kubernetes-jenkins"
 		return nil
 	}
 	err = jxenv.ModifyDevEnvironment(o.KubeClient, o.JXClient, o.Namespace, callback)
 	require.NoError(t, err, "failed to modify Dev Environment")
 
+	o.Destination.Jenkins.Enabled = true
 	err = o.Run()
 	require.NoError(t, err, "Failed %s with %s", dirName, err)
 
 	// lighthouse tekton pipelines...
-	assert.FileExists(t, filepath.Join(testDir, ".lighthouse", "jenkins-x", "triggers.yaml"))
-	assert.FileExists(t, filepath.Join(testDir, ".lighthouse", "jenkins-x", "release.yaml"))
-	assert.FileExists(t, filepath.Join(testDir, ".lighthouse", "jenkins-x", "pullrequest.yaml"))
-	assert.FileExists(t, filepath.Join(testDir, ".lighthouse", "jenkins-x", "Kptfile"))
-	assert.NoFileExists(t, filepath.Join(testDir, "jenkins-x.yml"))
-
-	assert.FileExists(t, filepath.Join(testDir, "Dockerfile"))
-	assert.FileExists(t, filepath.Join(testDir, "charts", dirName, "Chart.yaml"))
-	assert.FileExists(t, filepath.Join(testDir, "charts", dirName, "templates", "deployment.yaml"))
+	//assert.FileExists(t, filepath.Join(testDir, ".lighthouse", "jenkins-x", "triggers.yaml"))
 
 	// lets verify the pipeline bot user is a collaborator on the repository
 	require.NotNil(t, o.BootScmClient, "should have created a boot SCM client")
