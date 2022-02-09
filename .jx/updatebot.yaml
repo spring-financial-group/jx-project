@@ -10,3 +10,20 @@ spec:
               \s+ProjectVersion = "(.*)"
             files:
               - "pkg/plugins/versions.go"
+    - changes:
+        - regex:
+            pattern: |
+              github.com/jenkins-x-plugins/jx-project v(.*)
+            files:
+              - "go.mod"
+        - go:
+            owner:
+              - jenkins-x-plugins
+            repositories:
+              include:
+                - jx-secret
+            package: github.com/jenkins-x-plugins/jx-project
+            upgradePackages:
+              include:
+                - "github.com/jenkins-x/*"
+                - "github.com/jenkins-x-plugins/*"
