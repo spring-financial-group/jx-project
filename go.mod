@@ -4,7 +4,7 @@ go 1.15
 
 require (
 	github.com/Azure/draft v0.15.0
-	github.com/alexflint/go-filemutex v0.0.0-20171028004239-d358565f3c3f
+	github.com/alexflint/go-filemutex v1.1.0
 	github.com/blang/semver v3.5.1+incompatible
 	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/cpuguy83/go-md2man v1.0.10
@@ -20,17 +20,17 @@ require (
 	github.com/jenkins-x/jx-logging/v3 v3.0.6
 	github.com/jenkins-x/lighthouse-client v0.0.295
 	github.com/pkg/errors v0.9.1
-	github.com/spf13/cobra v1.2.0
+	github.com/spf13/cobra v1.6.1
 	github.com/spf13/pflag v1.0.5
-	github.com/stretchr/testify v1.7.0
+	github.com/stretchr/testify v1.8.1
 	github.com/tektoncd/pipeline v0.26.0
 	gopkg.in/AlecAivazis/survey.v1 v1.8.8
-	helm.sh/helm/v3 v3.6.3
-	k8s.io/api v0.21.0
-	k8s.io/apimachinery v0.21.0
+	helm.sh/helm/v3 v3.11.1
+	k8s.io/api v0.26.0
+	k8s.io/apimachinery v0.26.0
 	k8s.io/client-go v11.0.1-0.20190805182717-6502b5e7b1b5+incompatible
 	knative.dev/pkg v0.0.0-20210730172132-bb4aaf09c430
-	sigs.k8s.io/yaml v1.2.0
+	sigs.k8s.io/yaml v1.3.0
 )
 
 replace (
