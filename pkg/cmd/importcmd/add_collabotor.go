@@ -49,7 +49,7 @@ func (o *ImportOptions) AddAndAcceptCollaborator(newRepository bool) error {
 	permission := "admin"
 	pipelineUserName := o.PipelineUserName
 	if !newRepository {
-		// lets check if the pipeline user is already a collaborator
+		// let's check if the pipeline user is already a collaborator
 		collaborator, _, err := scmClient.Repositories.IsCollaborator(ctx, fullRepoName, pipelineUserName)
 		if err != nil {
 			return errors.Wrapf(err, "failed to check if %s is a collaborator on %s", pipelineUserName, fullRepoName)
@@ -94,6 +94,11 @@ func (o *ImportOptions) AddAndAcceptCollaborator(newRepository bool) error {
 			return errors.Wrapf(err, "failed to create SCM client for boot user %s on server %s", f.GitUsername, f.GitServerURL)
 		}
 		o.BootScmClient = bootScmClient
+
+		if o.ScmFactory.GitKind == "gitea" {
+			// AddCollaborator doesn't use invitations
+			return nil
+		}
 
 		// Get all invitations for the pipeline user
 		invites, _, err := bootScmClient.Users.ListInvitations(ctx)

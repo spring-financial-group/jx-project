@@ -37,16 +37,16 @@ func (o *ImportOptions) PickOwner(userName string) (string, error) {
 }
 
 // PickRepoName picks the repository name
-func (o *ImportOptions) PickRepoName(owner string, defaultName string, allowExistingRepo bool) (string, error) {
+func (o *ImportOptions) PickRepoName(owner, defaultName string, allowExistingRepo bool) (string, error) {
 	help := fmt.Sprintf("enter the name of the git repository to create within the %s owner", owner)
 
 	validator := func(val interface{}) error {
 		str, ok := val.(string)
 		if !ok {
-			return fmt.Errorf("Expected string value")
+			return fmt.Errorf("expected string value")
 		}
 		if strings.TrimSpace(str) == "" {
-			return fmt.Errorf("Repository name is required")
+			return fmt.Errorf("repository name is required")
 		}
 		if allowExistingRepo {
 			return nil
@@ -59,7 +59,6 @@ func (o *ImportOptions) PickRepoName(owner string, defaultName string, allowExis
 		return "", errors.Wrapf(err, "failed to choose the git repository")
 	}
 	return name, nil
-
 }
 
 // GetOrganizations gets the organisation
@@ -71,10 +70,11 @@ func (o *ImportOptions) getOwners(userName string) ([]string, error) {
 	}
 
 	ctx := context.Background()
-	orgs, _, err := o.ScmFactory.ScmClient.Organizations.List(ctx, scm.ListOptions{
+	orgs, _, err := o.ScmFactory.ScmClient.Organizations.List(ctx, &scm.ListOptions{
 		Size: 500,
 	})
 	if err != nil {
+		log.Logger().Warn("Please make sure that the file '$HOME/git/credentials' contains a valid API token in the format 'https://<Username>:<Personal Access Token>@gitserverurl' where gitserver can be github.com, gitlab.com, bitbucket.org etc")
 		return nil, errors.Wrapf(err, "failed to list git organisations for user %s", userName)
 	}
 	for _, org := range orgs {
@@ -102,7 +102,7 @@ func (o *ImportOptions) PickNewOrExistingGitRepository() (*CreateRepoData, error
 				if len(config.Servers) == 0 {
 					return nil, fmt.Errorf("No Git servers are configured!")
 				}
-				// lets assume the first for now
+				// let's assume the first for now
 				server = config.Servers[0]
 				currentServer := config.CurrentServer
 				if currentServer != "" {
@@ -203,7 +203,7 @@ func (o *ImportOptions) PickNewOrExistingGitRepository() (*CreateRepoData, error
 			return nil, err
 		}
 	} else {
-		log.Logger().Infof(QuestionAnswer("Using organisation", owner))
+		log.Logger().Info(QuestionAnswer("Using organisation", owner))
 	}
 
 	defaultRepoName := ""
@@ -213,14 +213,12 @@ func (o *ImportOptions) PickNewOrExistingGitRepository() (*CreateRepoData, error
 		if err != nil {
 			return nil, err
 		}
-	} else {
-		if !o.IgnoreExistingRepository {
-			err := o.ValidateRepositoryName(owner, repoName)
-			if err != nil {
-				return nil, err
-			}
-			log.Logger().Infof(QuestionAnswer("Using repository", repoName))
+	} else if !o.IgnoreExistingRepository {
+		err := o.ValidateRepositoryName(owner, repoName)
+		if err != nil {
+			return nil, err
 		}
+		log.Logger().Info(QuestionAnswer("Using repository", repoName))
 	}
 
 	fullName := scm.Join(owner, repoName)
@@ -235,21 +233,21 @@ func (o *ImportOptions) PickNewOrExistingGitRepository() (*CreateRepoData, error
 }
 
 // ValidateRepositoryName validates the repository does not exist
-func (o *ImportOptions) ValidateRepositoryName(owner string, name string) error {
+func (o *ImportOptions) ValidateRepositoryName(owner, name string) error {
 	fullName := scm.Join(owner, name)
 	ctx := context.Background()
-	_, _, err := o.ScmFactory.ScmClient.Repositories.Find(ctx, fullName)
+	_, res, err := o.ScmFactory.ScmClient.Repositories.Find(ctx, fullName)
 	if err == nil {
 		return errors.Errorf("repository %s already exists", fullName)
 	}
-	if scmhelpers.IsScmNotFound(err) {
+	if scmhelpers.IsScmResponseNotFound(res) {
 		return nil
 	}
 	return errors.Wrapf(err, "failed to check if repository %s exists", fullName)
 }
 
 // QuestionAnswer returns strings like Cobra question/answers for default cli options
-func QuestionAnswer(question string, answer string) string {
+func QuestionAnswer(question, answer string) string {
 	return fmt.Sprintf("%s %s: %s", termcolor.ColorBold(termcolor.ColorInfo("?")), termcolor.ColorBold(question), termcolor.ColorAnswer(answer))
 }
 

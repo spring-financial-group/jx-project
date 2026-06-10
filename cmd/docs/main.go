@@ -4,7 +4,7 @@
 // you may not use this file except in compliance with the License.
 // You may obtain a copy of the License at
 //
-//     http://www.apache.org/licenses/LICENSE-2.0
+//	http://www.apache.org/licenses/LICENSE-2.0
 //
 // Unless required by applicable law or agreed to in writing, software
 // distributed under the License is distributed on an "AS IS" BASIS,
@@ -15,13 +15,12 @@ package main
 
 import (
 	"fmt"
-	"io/ioutil"
 	"log"
 	"os"
 	"path/filepath"
 	"strings"
 
-	"github.com/jenkins-x/jx-project/pkg/cmd/root"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/root"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -29,21 +28,21 @@ import (
 const descriptionSourcePath = "docs/reference/cmd/"
 
 func generateCliYaml(opts *options) error {
-	root, _ := root.NewCmdMain()
-	disableFlagsInUseLine(root)
+	cmdMain, _ := root.NewCmdMain()
+	disableFlagsInUseLine(cmdMain)
 	source := filepath.Join(opts.source, descriptionSourcePath)
-	if err := loadLongDescription(root, source); err != nil {
+	if err := loadLongDescription(cmdMain, source); err != nil {
 		return err
 	}
 
 	switch opts.kind {
 	case "markdown":
-		return GenMarkdownTree(root, opts.target)
+		return GenMarkdownTree(cmdMain, opts.target)
 	case "man":
 		header := &GenManHeader{
 			Section: "1",
 		}
-		return GenManTree(root, header, opts.target)
+		return GenManTree(cmdMain, header, opts.target)
 	default:
 		return fmt.Errorf("invalid docs kind : %s", opts.kind)
 	}
@@ -83,7 +82,7 @@ func loadLongDescription(cmd *cobra.Command, path ...string) error {
 			continue
 		}
 
-		content, err := ioutil.ReadFile(fullpath)
+		content, err := os.ReadFile(fullpath)
 		if err != nil {
 			return err
 		}
@@ -111,7 +110,7 @@ func parseArgs() (*options, error) {
 	return opts, err
 }
 
-func parseMDContent(mdString string) (description string, examples string) {
+func parseMDContent(mdString string) (description, examples string) {
 	parsedContent := strings.Split(mdString, "\n## ")
 	for _, s := range parsedContent {
 		if strings.Index(s, "Description") == 0 {

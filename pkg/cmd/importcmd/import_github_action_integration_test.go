@@ -1,22 +1,21 @@
+//go:build integration
 // +build integration
 
 package importcmd_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"testing"
 
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/importcmd"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/testimports"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/jxenv"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/naming"
-	"github.com/jenkins-x/jx-project/pkg/cmd/importcmd"
-	"github.com/jenkins-x/jx-project/pkg/cmd/testimports"
-	"github.com/jenkins-x/jx-project/pkg/config"
 
-	v1 "github.com/jenkins-x/jx-api/v3/pkg/apis/jenkins.io/v1"
+	v1 "github.com/jenkins-x/jx-api/v4/pkg/apis/jenkins.io/v1"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -25,18 +24,15 @@ func TestImportGitHubActionProject(t *testing.T) {
 	// TODO github action support currently disabled
 	t.SkipNow()
 
-	tempDir, err := ioutil.TempDir("", "test-import-jx-gha-")
-	assert.NoError(t, err)
+	tempDir := t.TempDir()
 
 	testData := path.Join("test_data", "import_projects")
-	_, err = os.Stat(testData)
+	_, err := os.Stat(testData)
 	assert.NoError(t, err)
 
 	name := "nodejs"
 	srcDir := filepath.Join(testData, name)
 	assert.DirExists(t, srcDir, "source dir does not exist")
-
-	buildPackURL := "https://github.com/jstrachan/fake-github-action-build-pack.git"
 
 	testDir := tempDir
 
@@ -45,17 +41,13 @@ func TestImportGitHubActionProject(t *testing.T) {
 	dirName = naming.ToValidName(dirName)
 	o := &importcmd.ImportOptions{}
 
-	testimports.SetFakeClients(t, o)
+	testimports.SetFakeClients(t, o, false)
 	o.Dir = testDir
 	o.DisableMaven = true
-	o.UseDefaultGit = true
 
 	o.Destination.JenkinsX.Enabled = true
 	callback := func(env *v1.Environment) error {
-		env.Spec.TeamSettings.ImportMode = v1.ImportModeTypeYAML
-		if buildPackURL != "" {
-			env.Spec.TeamSettings.BuildPackURL = buildPackURL
-		}
+
 		return nil
 	}
 	err = jxenv.ModifyDevEnvironment(o.KubeClient, o.JXClient, o.Namespace, callback)
@@ -68,10 +60,4 @@ func TestImportGitHubActionProject(t *testing.T) {
 	assert.FileExists(t, filepath.Join(testDir, "charts", dirName, "Chart.yaml"))
 	assert.FileExists(t, filepath.Join(testDir, ".github", "pullrequest", "task.yml"))
 	assert.FileExists(t, filepath.Join(testDir, ".github", "release", "task.yml"))
-	assert.FileExists(t, filepath.Join(testDir, config.ProjectConfigFileName))
-
-	projectConfig, projectFileName, err := config.LoadProjectConfig(testDir)
-	require.NoError(t, err, "could not load jenkins configuration at %s", testDir)
-
-	assert.Equal(t, "none", projectConfig.BuildPack, "buildPack property in file %s", projectFileName)
 }

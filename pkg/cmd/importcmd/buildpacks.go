@@ -2,38 +2,32 @@ package importcmd
 
 import (
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 	"sort"
 
-	v1 "github.com/jenkins-x/jx-api/v3/pkg/apis/jenkins.io/v1"
-	reqcfg "github.com/jenkins-x/jx-api/v3/pkg/config"
+	v1 "github.com/jenkins-x/jx-api/v4/pkg/apis/jenkins.io/v1"
+
+	"github.com/jenkins-x-plugins/jx-gitops/pkg/apis/gitops/v1alpha1"
+	"github.com/jenkins-x-plugins/jx-project/pkg/gitresolver"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/termcolor"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/yamls"
-	"github.com/jenkins-x/jx-project/pkg/apis/project/v1alpha1"
-	"github.com/jenkins-x/jx-project/pkg/config"
-	"github.com/jenkins-x/jx-project/pkg/gitresolver"
 
-	"github.com/pkg/errors"
-
+	jxdraft "github.com/jenkins-x-plugins/jx-project/pkg/draft"
 	"github.com/jenkins-x/jx-logging/v3/pkg/log"
-	jxdraft "github.com/jenkins-x/jx-project/pkg/draft"
-	"github.com/jenkins-x/jx-project/pkg/jenkinsfile"
+	"github.com/pkg/errors"
 )
 
 // InvokeDraftPack used to pass arguments into the draft pack invocation
 type InvokeDraftPack struct {
-	Dir                         string
-	CustomDraftPack             string
-	Jenkinsfile                 string
-	InitialisedGit              bool
-	DisableAddFiles             bool
-	UseNextGenPipeline          bool
-	CreateJenkinsxYamlIfMissing bool
-	ProjectConfig               *config.ProjectConfig
+	Dir             string
+	DevEnvCloneDir  string
+	CustomDraftPack string
+	Jenkinsfile     string
+	InitialisedGit  bool
+	DisableAddFiles bool
 }
 
 // InitBuildPacks initialise the build packs
@@ -51,27 +45,32 @@ func (o *ImportOptions) InitBuildPacks(i *InvokeDraftPack) (string, *v1.TeamSett
 	return dir, settings, err
 }
 
+// CloneDevEnvironment clones the development environment to a directory
+func (o *ImportOptions) CloneDevEnvironment() (string, error) {
+	if o.DevEnv == nil {
+		return "", errors.Errorf("no Dev Environment")
+	}
+	devEnvGitURL := o.DevEnv.Spec.Source.URL
+	if devEnvGitURL == "" {
+		return "", errors.Errorf("no spec.source.url for dev environment so cannot clone the version stream")
+	}
+	devEnvCloneDir, err := gitclient.CloneToDir(o.Git(), devEnvGitURL, "")
+	if err != nil {
+		return "", errors.Wrapf(err, "failed to clone dev environment git repository %s", devEnvGitURL)
+	}
+	return devEnvCloneDir, nil
+}
+
 // PickPipelineCatalog lets you pick a build pack
 func (o *ImportOptions) PickPipelineCatalog(i *InvokeDraftPack) (*v1alpha1.PipelineCatalogSource, *v1.TeamSettings, error) {
 	if o.DevEnv == nil {
 		return nil, nil, errors.Errorf("no Dev Environment")
 	}
+	devEnvCloneDir := i.DevEnvCloneDir
+	if devEnvCloneDir == "" {
+		return nil, nil, errors.Errorf("no Dev Environment git clone dir")
+	}
 	settings := &o.DevEnv.Spec.TeamSettings
-	devEnvGitURL := o.DevEnv.Spec.Source.URL
-
-	if devEnvGitURL == "" {
-		return nil, settings, errors.Errorf("no spec.source.url for dev environment so cannot clone the version stream")
-	}
-	devEnvCloneDir, err := gitclient.CloneToDir(o.Git(), devEnvGitURL, "")
-	if err != nil {
-		return nil, settings, errors.Wrapf(err, "failed to clone dev environment git repository %s", devEnvGitURL)
-	}
-
-	requirements, _, err := reqcfg.LoadRequirementsConfig(devEnvCloneDir, true)
-	if err != nil {
-		return nil, settings, errors.Wrapf(err, "failed to load requirements file in dir %s from dev Environment git URL %s", devEnvCloneDir, devEnvGitURL)
-	}
-
 	pipelineCatalogsFile := filepath.Join(devEnvCloneDir, "extensions", v1alpha1.PipelineCatalogFileName)
 	exists, err := files.FileExists(pipelineCatalogsFile)
 	if err != nil {
@@ -95,18 +94,6 @@ func (o *ImportOptions) PickPipelineCatalog(i *InvokeDraftPack) (*v1alpha1.Pipel
 			Label:  "Cluster Pipeline Catalog",
 			GitURL: "",
 			GitRef: "",
-		}
-		bp := requirements.BuildPacks
-		if bp != nil {
-			bpl := bp.BuildPackLibrary
-			if bpl != nil {
-				if bpl.Name != "" {
-					defaultCatalog.ID = bpl.Name
-					defaultCatalog.Label = bpl.Name
-				}
-				defaultCatalog.GitURL = bpl.GitURL
-				defaultCatalog.GitRef = bpl.GitRef
-			}
 		}
 		if defaultCatalog.GitURL == "" {
 			defaultCatalog.GitURL = "https://github.com/jenkins-x/jx3-pipeline-catalog"
@@ -147,34 +134,6 @@ func (o *ImportOptions) PickPipelineCatalog(i *InvokeDraftPack) (*v1alpha1.Pipel
 	return m[name], settings, err
 }
 
-// createDefaultBuildBacks creates the default build packs if there are no BuildPack CRDs registered in a cluster
-func createDefaultBuildBacks() []v1.BuildPack {
-	return []v1.BuildPack{
-		/* TODO
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "kubernetes-workloads",
-			},
-			Spec: v1.BuildPackSpec{
-				Label:  "Kubernetes Workloads: Automated CI+CD with GitOps Promotion",
-				GitURL: v1.KubernetesWorkloadBuildPackURL,
-				GitRef: v1.KubernetesWorkloadBuildPackRef,
-			},
-		},
-		{
-			ObjectMeta: metav1.ObjectMeta{
-				Name: "classic-workloads",
-			},
-			Spec: v1.BuildPackSpec{
-				Label:  "Library Workloads: CI+Release but no CD",
-				GitURL: v1.ClassicWorkloadBuildPackURL,
-				GitRef: v1.ClassicWorkloadBuildPackRef,
-			},
-		},
-		*/
-	}
-}
-
 // InvokeDraftPack invokes a draft pack copying in a Jenkinsfile if required
 func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	packsDir, _, err := o.InitBuildPacks(i)
@@ -182,13 +141,11 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 		return "", err
 	}
 
-	// lets assume Jenkins X import mode
+	// let's assume Jenkins X import mode
 	//
 	// was:
 	// lets configure the draft pack mode based on the team settings
 	// if settings.GetImportMode() != v1.ImportModeTypeJenkinsfile {
-	i.UseNextGenPipeline = true
-	i.CreateJenkinsxYamlIfMissing = true
 
 	dir := i.Dir
 	customDraftPack := i.CustomDraftPack
@@ -197,20 +154,10 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	gradleName := filepath.Join(dir, "build.gradle")
 	jenkinsPluginsName := filepath.Join(dir, "plugins.txt")
 	packagerConfigName := filepath.Join(dir, "packager-config.yml")
-	jenkinsxYaml := filepath.Join(dir, config.ProjectConfigFileName)
-	envChart := filepath.Join(dir, "env/Chart.yaml")
+	envChart := filepath.Join(dir, "env", "Chart.yaml")
 	lpack := ""
-	if len(customDraftPack) == 0 {
-		if i.ProjectConfig == nil {
-			i.ProjectConfig, _, err = config.LoadProjectConfig(dir)
-			if err != nil {
-				return "", err
-			}
-		}
-		customDraftPack = i.ProjectConfig.BuildPack
-	}
 
-	if len(customDraftPack) > 0 {
+	if customDraftPack != "" {
 		log.Logger().Infof("trying to use draft pack: %s", customDraftPack)
 		lpack = filepath.Join(packsDir, customDraftPack)
 		f, err := files.DirExists(lpack)
@@ -224,9 +171,9 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 		}
 	}
 
-	if len(lpack) == 0 {
+	if lpack == "" {
 		if exists, err := files.FileExists(pomName); err == nil && exists {
-			pack, err := PomFlavour(pomName)
+			pack, err := PomFlavour(packsDir, pomName)
 			if err != nil {
 				return "", err
 			}
@@ -251,7 +198,7 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 
 			if err != nil {
 				if lpack == "" {
-					// lets detect docker and/or helm
+					// let's detect docker and/or helm
 
 					// TODO one day when our pipelines can include steps conditional on the presence of a file glob
 					// we can just use a single docker/helm package that does docker and/or helm
@@ -263,18 +210,18 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 						hasDocker = true
 					}
 
-					// lets check for a helm pack
-					files, err2 := filepath.Glob(filepath.Join(dir, "charts/*/Chart.yaml"))
+					// let's check for a helm pack
+					glob, err2 := filepath.Glob(filepath.Join(dir, "charts", "*", "Chart.yaml"))
 					if err2 != nil {
 						return "", errors.Wrapf(err, "failed to detect if there was a chart file in dir %s", dir)
 					}
-					if len(files) == 0 {
-						files, err2 = filepath.Glob(filepath.Join(dir, "*/Chart.yaml"))
+					if len(glob) == 0 {
+						glob, err2 = filepath.Glob(filepath.Join(dir, "*", "Chart.yaml"))
 						if err2 != nil {
 							return "", errors.Wrapf(err, "failed to detect if there was a chart file in dir %s", dir)
 						}
 					}
-					if len(files) > 0 {
+					if len(glob) > 0 {
 						hasHelm = true
 					}
 
@@ -292,7 +239,7 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 					}
 				}
 				if lpack == "" {
-					exists, err2 := files.FileExists(filepath.Join(dir, jenkinsfile.Name))
+					exists, err2 := files.FileExists(filepath.Join(dir, JenkinsfileName))
 					if exists && err2 == nil {
 						lpack = filepath.Join(packsDir, "custom-jenkins")
 						err = nil
@@ -306,7 +253,7 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	}
 
 	pack := filepath.Base(lpack)
-	pack, err = o.PickCatalogFolderName(i, packsDir, pack)
+	pack, err = o.PickCatalogFolderName(packsDir, pack)
 	if err != nil {
 		return "", err
 	}
@@ -320,12 +267,8 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	}
 
 	chartsDir := filepath.Join(dir, "charts")
-	jenkinsxYamlExists, err := files.FileExists(jenkinsxYaml)
-	if err != nil {
-		return pack, err
-	}
 
-	err = copyBuildPack(dir, lpack)
+	err = o.copyBuildPack(dir, lpack)
 	if err != nil {
 		log.Logger().Warnf("Failed to apply the build pack in %s due to %s", dir, err)
 	}
@@ -333,39 +276,14 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	// lets delete empty charts dir if a draft pack created one
 	exists, err := files.DirExists(chartsDir)
 	if err == nil && exists {
-		files, err := ioutil.ReadDir(chartsDir)
+		fileList, err := os.ReadDir(chartsDir)
 		if err != nil {
 			return pack, errors.Wrapf(err, "failed to read charts dir %s", chartsDir)
 		}
-		if len(files) == 0 {
+		if len(fileList) == 0 {
 			err = os.Remove(chartsDir)
 			if err != nil {
 				return pack, errors.Wrapf(err, "failed to remove empty charts dir %s", chartsDir)
-			}
-		}
-	}
-
-	if !jenkinsxYamlExists && i.CreateJenkinsxYamlIfMissing {
-		// lets check if we have a lighthouse trigger
-		g := filepath.Join(dir, ".lighthouse", "*", "triggers.yaml")
-		matches, err := filepath.Glob(g)
-		if err != nil {
-			return pack, errors.Wrapf(err, "failed to evaluate glob %s", g)
-		}
-		if len(matches) == 0 {
-			pipelineConfig, err := config.LoadProjectConfigFile(jenkinsxYaml)
-			if err != nil {
-				return pack, err
-			}
-
-			// only update the build pack if its not currently set to none so that build packs can
-			// use a custom pipeline plugin mechanism
-			if pipelineConfig.BuildPack != pack && pipelineConfig.BuildPack != "none" {
-				pipelineConfig.BuildPack = pack
-				err = pipelineConfig.SaveConfig(jenkinsxYaml)
-				if err != nil {
-					return pack, err
-				}
 			}
 		}
 	}
@@ -384,37 +302,64 @@ func (o *ImportOptions) InvokeDraftPack(i *InvokeDraftPack) (string, error) {
 	return pack, nil
 }
 
-// DiscoverBuildPack discovers the build pack given the build pack configuration
-func (o *ImportOptions) DiscoverBuildPack(dir string, projectConfig *config.ProjectConfig, packConfig string) (string, error) {
-	if packConfig != "" {
-		return packConfig, nil
-	}
-	args := &InvokeDraftPack{
-		Dir:             dir,
-		CustomDraftPack: packConfig,
-		ProjectConfig:   projectConfig,
-		DisableAddFiles: true,
-	}
-	pack, err := o.InvokeDraftPack(args)
-	if err != nil {
-		return pack, errors.Wrapf(err, "failed to discover task pack in dir %s", dir)
-	}
-	return pack, nil
-}
-
 // Refactor: taken from jx so we can also bring in the draft pack and not fail when copying buildpacks without a charts dir
 // CopyBuildPack copies the build pack from the source dir to the destination dir
-func copyBuildPack(dest, src string) error {
+func (o *ImportOptions) copyBuildPack(dest, src string) error {
 	// first do some validation that we are copying from a valid pack directory
 	p, err := FromDir(src)
 	if err != nil {
 		return fmt.Errorf("could not load %s: %s", src, err)
 	}
 
-	// lets remove any files we think should be zapped
-	for _, file := range []string{jenkinsfile.PipelineConfigFileName, jenkinsfile.PipelineTemplateFileName} {
-		delete(p.Files, file)
+	chartsDir := filepath.Join(dest, "charts")
+	newDir := filepath.Join(chartsDir, o.AppName)
+	exists, err := files.DirExists(newDir)
+	if err != nil {
+		return errors.Wrapf(err, "failed to check if chart directory exists %s", newDir)
 	}
+
+	if exists {
+		// If there already is a chart for this application let's skip copying it from the pack
+		p.Charts = nil
+	} else {
+		// if we already have a Charts dir lets move it instead
+		chartFile := filepath.Join(chartsDir, "Chart.yaml")
+		exists, err := files.FileExists(chartFile)
+		if err != nil {
+			return errors.Wrapf(err, "failed to check if chart file exists %s", chartFile)
+		}
+
+		if exists {
+			// If there already is a chart for this application let's skip copying it from the pack
+			p.Charts = nil
+
+			// let's move the charts folder to charts/$name so its a real chart layout
+
+			fs, err := os.ReadDir(chartsDir)
+			if err != nil {
+				return errors.Wrapf(err, "failed to read dir %s", chartsDir)
+			}
+			err = os.MkdirAll(newDir, files.DefaultDirWritePermissions)
+			if err != nil {
+				return errors.Wrapf(err, "failed to create dir %s", newDir)
+			}
+
+			for _, f := range fs {
+				name := f.Name()
+				oldPath := filepath.Join(chartsDir, name)
+				newPath := filepath.Join(newDir, name)
+				err = os.Rename(oldPath, newPath)
+				if err != nil {
+					return errors.Wrapf(err, "failed to move file %s to %s", oldPath, newPath)
+				}
+			}
+		}
+	}
+
+	if o.PackFilter != nil {
+		o.PackFilter(p)
+	}
+
 	_, packName := filepath.Split(src)
 	return p.SaveDir(dest, packName)
 }

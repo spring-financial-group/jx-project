@@ -17,7 +17,7 @@ func (o *ImportOptions) HasJenkinsfile() (string, error) {
 	dir := o.Dir
 	var err error
 
-	jenkinsfile := jenkinsfileName
+	jenkinsfile := JenkinsfileName
 	if o.Jenkinsfile != "" {
 		jenkinsfile = o.Jenkinsfile
 	}
@@ -35,13 +35,14 @@ func (o *ImportOptions) HasJenkinsfile() (string, error) {
 }
 
 // EvaluateBuildPack performs an evaluation of the build pack on the current source
-func (o *ImportOptions) EvaluateBuildPack(jenkinsfile string) error {
+func (o *ImportOptions) EvaluateBuildPack(devEnvCloneDir, jenkinsfile string) error {
 	// TODO this is a workaround of this draft issue:
 	// https://github.com/Azure/draft/issues/476
 	var err error
 
 	args := &InvokeDraftPack{
 		Dir:             o.Dir,
+		DevEnvCloneDir:  devEnvCloneDir,
 		CustomDraftPack: o.Pack,
 		Jenkinsfile:     jenkinsfile,
 		InitialisedGit:  o.InitialisedGit,
@@ -51,19 +52,12 @@ func (o *ImportOptions) EvaluateBuildPack(jenkinsfile string) error {
 		return err
 	}
 
-	// lets rename the chart to be the same as our app name
+	// let's rename the chart to be the same as our app name
 	err = o.renameChartToMatchAppName()
 	if err != nil {
 		return err
 	}
 
-	/* TODO
-	err = o.modifyDeployKind()
-	if err != nil {
-		return err
-	}
-
-	*/
 	if o.PostDraftPackCallback != nil {
 		err = o.PostDraftPackCallback()
 		if err != nil {
@@ -141,7 +135,7 @@ func (o *ImportOptions) getOrganisationOrCurrentUser() string {
 }
 
 func (o *ImportOptions) getCurrentUser() string {
-	//walk through every file in the given dir and update the placeholders
+	// walk through every file in the given dir and update the placeholders
 	if o.ScmFactory.GitUsername == "" {
 		if o.ScmFactory.ScmClient != nil {
 			ctx := context.Background()

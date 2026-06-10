@@ -1,27 +1,25 @@
+//go:build integration
 // +build integration
 
 package importcmd_test
 
 import (
-	"io/ioutil"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/importcmd"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/testimports"
+	"github.com/jenkins-x-plugins/jx-project/pkg/constants"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/jxenv"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/naming"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/testhelpers"
-	"github.com/jenkins-x/jx-project/pkg/cmd/importcmd"
-	"github.com/jenkins-x/jx-project/pkg/cmd/testimports"
-	"github.com/jenkins-x/jx-project/pkg/config"
-	"github.com/jenkins-x/jx-project/pkg/constants"
 
-	v1 "github.com/jenkins-x/jx-api/v3/pkg/apis/jenkins.io/v1"
+	v1 "github.com/jenkins-x/jx-api/v4/pkg/apis/jenkins.io/v1"
 	"github.com/jenkins-x/jx-logging/v3/pkg/log"
-	"github.com/jenkins-x/jx-project/pkg/jenkinsfile"
 	"github.com/stretchr/testify/require"
 
 	"github.com/stretchr/testify/assert"
@@ -40,14 +38,13 @@ func TestImportProjectsToJenkins(t *testing.T) {
 	// TODO jenkins import current disabled
 	t.SkipNow()
 
-	tempDir, err := ioutil.TempDir("", "test-import-projects")
-	assert.NoError(t, err)
+	tempDir := t.TempDir()
 
 	testData := path.Join("test_data", "import_projects")
-	_, err = os.Stat(testData)
+	_, err := os.Stat(testData)
 	assert.NoError(t, err)
 
-	files, err := ioutil.ReadDir(testData)
+	files, err := os.ReadDir(testData)
 	assert.NoError(t, err)
 
 	for _, f := range files {
@@ -60,14 +57,13 @@ func TestImportProjectsToJenkins(t *testing.T) {
 }
 
 func TestImportProjectToJenkinsX(t *testing.T) {
-	tempDir, err := ioutil.TempDir("", "test-import-ng-projects")
-	assert.NoError(t, err)
+	tempDir := t.TempDir()
 
 	testData := path.Join("test_data", "import_projects")
-	_, err = os.Stat(testData)
+	_, err := os.Stat(testData)
 	assert.NoError(t, err)
 
-	files, err := ioutil.ReadDir(testData)
+	files, err := os.ReadDir(testData)
 	assert.NoError(t, err)
 
 	for _, f := range files {
@@ -108,10 +104,9 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 	dirName = naming.ToValidName(dirName)
 	_, o := importcmd.NewCmdImportAndOptions()
 
-	testimports.SetFakeClients(t, o)
+	testimports.SetFakeClients(t, o, false)
 	o.Dir = testDir
 	o.DisableMaven = true
-	o.UseDefaultGit = true
 	o.WaitForSourceRepositoryPullRequest = false
 
 	if dirName == "maven-camel" {
@@ -120,25 +115,20 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 	if importToJenkinsX {
 		o.Destination.JenkinsX.Enabled = true
 		callback := func(env *v1.Environment) error {
-			env.Spec.TeamSettings.ImportMode = v1.ImportModeTypeYAML
-			if buildPackURL != "" {
-				env.Spec.TeamSettings.BuildPackURL = buildPackURL
-			}
 			return nil
 		}
 		err := jxenv.ModifyDevEnvironment(o.KubeClient, o.JXClient, o.Namespace, callback)
 		require.NoError(t, err, "failed to modify Dev Environment")
 	} else {
 		o.Destination.Jenkins.Enabled = true
-		o.Destination.Jenkins.JenkinsName = "myjenkins"
-		o.Destination.Jenkins.JenkinsServiceNames = []string{"myjenkins"}
+		o.Destination.Jenkins.Server = "myjenkins"
 
-		// lets generate a dummy Jenkinsfile so that we know we don't run the build packs
+		// let's generate a dummy Jenkinsfile so that we know we don't run the build packs
 		jenkinsfile := filepath.Join(testDir, "Jenkinsfile")
 		exists, err := files.FileExists(jenkinsfile)
 		require.NoError(t, err, "could not check for file %s", jenkinsfile)
 		if !exists {
-			err = ioutil.WriteFile(jenkinsfile, []byte("node {}"), files.DefaultFileWritePermissions)
+			err = os.WriteFile(jenkinsfile, []byte("node {}"), files.DefaultFileWritePermissions)
 			require.NoError(t, err, "failed to write dummy Jenkinsfile to %s", jenkinsfile)
 		}
 	}
@@ -150,18 +140,16 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 	err := o.Run()
 	assert.NoError(t, err, "Failed %s with %s", dirName, err)
 	if err == nil {
-		defaultJenkinsfileName := jenkinsfile.Name
-		defaultJenkinsfileBackupSuffix := jenkinsfile.BackupSuffix
-		defaultJenkinsfile := filepath.Join(testDir, defaultJenkinsfileName)
+		defaultJenkinsfileBackupSuffix := ".backup"
+		defaultJenkinsfile := filepath.Join(testDir, importcmd.JenkinsfileName)
 		jfname := defaultJenkinsfile
-		if o.Jenkinsfile != "" && o.Jenkinsfile != defaultJenkinsfileName {
+		if o.Jenkinsfile != "" && o.Jenkinsfile != importcmd.JenkinsfileName {
 			jfname = filepath.Join(testDir, o.Jenkinsfile)
 		}
 		if dirName == "custom-jenkins" {
-			assert.FileExists(t, filepath.Join(testDir, jenkinsfile.Name))
-			assert.NoFileExists(t, filepath.Join(testDir, jenkinsfile.Name+".backup"))
-			assert.NoFileExists(t, filepath.Join(testDir, jenkinsfile.Name+"-Renamed"))
-			assert.NoFileExists(t, filepath.Join(testDir, config.ProjectConfigFileName))
+			assert.FileExists(t, filepath.Join(testDir, importcmd.JenkinsfileName))
+			assert.NoFileExists(t, filepath.Join(testDir, importcmd.JenkinsfileName+defaultJenkinsfileBackupSuffix))
+			assert.NoFileExists(t, filepath.Join(testDir, importcmd.JenkinsfileName+"-Renamed"))
 		} else if importToJenkinsX {
 			assert.NoFileExists(t, jfname)
 		} else {
@@ -189,6 +177,16 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 					testhelpers.AssertFileDoesNotContain(t, jfname, "helm")
 				}
 			} else {
+				chartEntries, err := os.ReadDir(filepath.Join(testDir, "charts"))
+				assert.NoError(t, err, "can't read charts directory")
+				t.Logf("Content of chart %s:", filepath.Join(testDir, "charts"))
+				for _, d := range chartEntries {
+					t.Log(d.Name())
+
+					if d.IsDir() {
+						assert.Equal(t, dirName, d.Name(), "Expect only application chart in charts directory")
+					}
+				}
 				assert.FileExists(t, filepath.Join(testDir, "charts", dirName, "Chart.yaml"))
 			}
 		} else {
@@ -198,7 +196,7 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 			}
 		}
 
-		// lets test we modified the deployment kind
+		// let's test we modified the deployment kind
 		if dirName == "maven-camel" {
 			testhelpers.AssertFileContains(t, filepath.Join(testDir, "charts", "maven-camel", "values.yaml"), "knativeDeploy: true")
 		}
@@ -227,7 +225,7 @@ func assertImport(t *testing.T, testDir string, testcase string, importToJenkins
 
 func assertProbePathEquals(t *testing.T, fileName string, expectedProbe string) {
 	if assert.FileExists(t, fileName) {
-		data, err := ioutil.ReadFile(fileName)
+		data, err := os.ReadFile(fileName)
 		assert.NoError(t, err, "Failed to read file %s", fileName)
 		if err == nil {
 			text := string(data)

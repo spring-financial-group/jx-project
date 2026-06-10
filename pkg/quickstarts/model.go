@@ -5,11 +5,11 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/jenkins-x-plugins/jx-gitops/pkg/apis/gitops/v1alpha1"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/input"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/options"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/stringhelpers"
 	"github.com/jenkins-x/jx-logging/v3/pkg/log"
-	"github.com/jenkins-x/jx-project/pkg/apis/project/v1alpha1"
 	"github.com/pkg/errors"
 )
 
@@ -17,77 +17,6 @@ const (
 	// JenkinsXQuickstartsOwner default quickstart owner
 	JenkinsXQuickstartsOwner = "jenkins-x-quickstarts"
 )
-
-// GitQuickstart returns a github based quickstart
-func GitQuickstart(owner string, repo string, version string, downloadURL string, language string, framework string, tags ...string) *Quickstart {
-	return &Quickstart{
-		ID:             owner + "/" + repo,
-		Owner:          owner,
-		Name:           repo,
-		Version:        version,
-		Language:       language,
-		Framework:      framework,
-		Tags:           tags,
-		DownloadZipURL: downloadURL,
-	}
-}
-
-// QuickStartVersion creates a quickstart version string
-func QuickStartVersion(sha string) string {
-	return "1.0.0+" + sha
-}
-
-/*
-TODO
-
-func BranchArchiveURL(org string, name string, branch string) string {
-	return stringhelpers.UrlJoin("https://codeload.github.com", org, name, "zip", branch)
-}
-
-// LoadGithubQuickstarts Loads quickstarts from github
-func (model *QuickstartModel) LoadGithubQuickstarts(provider gits.GitProvider, owner string, includes []string, excludes []string) error {
-	repos, err := provider.ListRepositories(owner)
-	if err != nil {
-		return err
-	}
-	for _, repo := range repos {
-		name := repo.Name
-		if stringhelpers.StringMatchesAny(name, includes, excludes) {
-			model.Add(toGitHubQuickstart(provider, owner, repo))
-		}
-	}
-	return nil
-}
-
-func toGitHubQuickstart(provider gits.GitProvider, owner string, repo *gits.GitRepository) *Quickstart {
-	language := repo.Language
-	// TODO find this from GitHub???
-	framework := ""
-	tags := []string{}
-
-	branch := "master"
-	repoName := repo.Name
-	gitCommits, err := provider.ListCommits(owner, repoName, &gits.ListCommitsArguments{
-		SHA:     branch,
-		Page:    1,
-		PerPage: 1,
-	})
-	version := ""
-	u := ""
-	if err != nil {
-		log.Logger().Warnf("failed to load commits on branch %s for repo %s/%s due to: %s", branch, owner, repoName, err.Error())
-	} else if len(gitCommits) > 0 {
-		commit := gitCommits[0]
-		sha := commit.ShortSha()
-		version = QuickStartVersion(sha)
-		u = BranchArchiveURL(owner, repoName, sha)
-	}
-	if u == "" {
-		u = BranchArchiveURL(owner, repoName, "master")
-	}
-	return GitQuickstart(owner, repoName, version, u, language, framework, tags...)
-}
-*/
 
 // NewQuickstartModel creates a new quickstart model
 func NewQuickstartModel() *QuickstartModel {
@@ -124,7 +53,7 @@ func (model *QuickstartModel) CreateSurvey(filter *QuickstartFilter, batchMode b
 	if language != "" {
 		languages := model.Languages()
 		if len(languages) == 0 {
-			// lets ignore this filter as there are none available
+			// let's ignore this filter as there are none available
 			filter.Language = ""
 		} else {
 			lower := strings.ToLower(language)
@@ -145,7 +74,7 @@ func (model *QuickstartModel) CreateSurvey(filter *QuickstartFilter, batchMode b
 	sort.Strings(names)
 
 	if len(names) == 0 {
-		return nil, fmt.Errorf("No quickstarts match filter")
+		return nil, fmt.Errorf("no quickstarts match filter")
 	}
 	answer := ""
 	if len(names) == 1 {
@@ -153,7 +82,7 @@ func (model *QuickstartModel) CreateSurvey(filter *QuickstartFilter, batchMode b
 		answer = names[0]
 	} else if batchMode {
 		// should not prompt for selection in batch mode so return an error
-		return nil, fmt.Errorf("More than one quickstart matches the current filter options. Try filtering based on other criteria (eg. Owner or Text): %v", names)
+		return nil, fmt.Errorf("more than one quickstart matches the current filter options. Try filtering based on other criteria (eg. Owner or Text): %v", names)
 	} else {
 		var err error
 		answer, err = i.PickNameWithDefault(names, "select the quickstart you wish to create:", answer, "you need to pick the quickstart project to start from")
@@ -163,11 +92,11 @@ func (model *QuickstartModel) CreateSurvey(filter *QuickstartFilter, batchMode b
 	}
 
 	if answer == "" {
-		return nil, fmt.Errorf("No quickstart chosen")
+		return nil, fmt.Errorf("no quickstart chosen")
 	}
 	q := m[answer]
 	if q == nil {
-		return nil, fmt.Errorf("Could not find chosen quickstart for %s", answer)
+		return nil, fmt.Errorf("could not find chosen quickstart for %s", answer)
 	}
 	name := filter.ProjectName
 	form := &QuickstartForm{
@@ -236,17 +165,14 @@ func (model *QuickstartModel) LoadQuickStarts(qs *v1alpha1.QuickstartsSpec, dir,
 		if to == nil {
 			to = &Quickstart{}
 		}
-		err := model.convertToQuickStart(from, to)
-		if err != nil {
-			return errors.Wrapf(err, "failed to convert quickstart from the version stream %s", id)
-		}
+		model.convertToQuickStart(from, to)
 		model.Quickstarts[id] = to
 	}
 
 	return nil
 }
 
-func (model *QuickstartModel) convertToQuickStart(from *v1alpha1.QuickstartSource, to *Quickstart) error {
+func (model *QuickstartModel) convertToQuickStart(from *v1alpha1.QuickstartSource, to *Quickstart) {
 	s := func(text string, override string) string {
 		if override != "" {
 			return override
@@ -271,5 +197,4 @@ func (model *QuickstartModel) convertToQuickStart(from *v1alpha1.QuickstartSourc
 	to.Framework = s(to.Framework, from.Framework)
 	to.Language = s(to.Language, from.Language)
 	to.Tags = ss(to.Tags, from.Tags)
-	return nil
 }

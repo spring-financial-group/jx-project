@@ -1,21 +1,22 @@
+//go:build integration
 // +build integration
 
 package importcmd_test
 
 import (
 	"fmt"
-	"io/ioutil"
+	"os"
 	"path"
 	"path/filepath"
 	"testing"
 
-	v1 "github.com/jenkins-x/jx-api/v3/pkg/apis/jenkins.io/v1"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/importcmd"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/testimports"
+	"github.com/jenkins-x-plugins/jx-project/pkg/constants"
+	v1 "github.com/jenkins-x/jx-api/v4/pkg/apis/jenkins.io/v1"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/jxenv"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/kube/naming"
-	"github.com/jenkins-x/jx-project/pkg/cmd/importcmd"
-	"github.com/jenkins-x/jx-project/pkg/cmd/testimports"
-	"github.com/jenkins-x/jx-project/pkg/constants"
 	"github.com/pkg/errors"
 	"github.com/stretchr/testify/require"
 
@@ -23,12 +24,10 @@ import (
 )
 
 func TestImportProjectNextGenPipelineWithDeploy(t *testing.T) {
-	// TODO
 	t.SkipNow()
 
 	t.Parallel()
-	tmpDir, err := ioutil.TempDir("", "test-import-deploy-projects-")
-	assert.NoError(t, err)
+	tmpDir := t.TempDir()
 	require.DirExists(t, tmpDir, "could not create temp dir for running tests")
 
 	srcDir := path.Join("test_data", "import_projects", "nodejs")
@@ -98,7 +97,7 @@ func TestImportProjectNextGenPipelineWithDeploy(t *testing.T) {
 		}
 		dir := filepath.Join(tmpDir, name)
 
-		err = files.CopyDir(srcDir, dir, true)
+		err := files.CopyDir(srcDir, dir, true)
 		require.NoError(t, err, "failed to copy source to %s", dir)
 
 		_, io := importcmd.NewCmdImportAndOptions()
@@ -119,7 +118,7 @@ func TestImportProjectNextGenPipelineWithDeploy(t *testing.T) {
 }
 
 func assertImportWithDeployCLISettings(t *testing.T, io *importcmd.ImportOptions, dir string, expectedKind string, expectedCanary bool, expectedHPA bool) error {
-	// lets force the CLI arguments to be parsed first to ensure the flags are set to avoid inheriting them from the TeamSettings
+	// let's force the CLI arguments to be parsed first to ensure the flags are set to avoid inheriting them from the TeamSettings
 	/* TODO
 	err := io.Cmd.Flags().Parse(edit.ToDeployArguments("deploy-kind", expectedKind, expectedCanary, expectedHPA))
 	if err != nil {
@@ -127,7 +126,7 @@ func assertImportWithDeployCLISettings(t *testing.T, io *importcmd.ImportOptions
 	}
 	*/
 
-	// lets check we parsed the CLI arguments correctly
+	// let's check we parsed the CLI arguments correctly
 	_, testName := filepath.Split(dir)
 	assert.Equal(t, expectedKind, io.DeployKind, "parse argument: deployKind for test %s", testName)
 	assert.Equal(t, expectedCanary, io.DeployOptions.Canary, "parse argument: deployOptions.Canary for test %s", testName)
@@ -165,8 +164,7 @@ func assertImportHasDeploy(t *testing.T, o *importcmd.ImportOptions, testDir str
 	_, testName := filepath.Split(testDir)
 	testName = naming.ToValidName(testName)
 
-	testimports.SetFakeClients(t, o)
-	o.UseDefaultGit = true
+	testimports.SetFakeClients(t, o, false)
 
 	err := o.Run()
 	assert.NoError(t, err, "Failed %s with %s", testName, err)
@@ -176,9 +174,9 @@ func assertImportHasDeploy(t *testing.T, o *importcmd.ImportOptions, testDir str
 		assert.FileExists(t, valuesFile)
 		t.Logf("completed test in dir %s", testDir)
 
-		// lets validate the resulting values.yaml
-		//yamlData, err := ioutil.ReadFile(valuesFile)
-		_, err := ioutil.ReadFile(valuesFile)
+		// let's validate the resulting values.yaml
+		//yamlData, err := os.ReadFile(valuesFile)
+		_, err := os.ReadFile(valuesFile)
 		assert.NoError(t, err, "Failed to load file %s", valuesFile)
 
 		/* TODO

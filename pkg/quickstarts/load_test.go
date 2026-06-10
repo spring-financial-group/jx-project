@@ -1,3 +1,4 @@
+//go:build unit
 // +build unit
 
 package quickstarts_test
@@ -7,8 +8,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	fakejx "github.com/jenkins-x/jx-api/v3/pkg/client/clientset/versioned/fake"
-	"github.com/jenkins-x/jx-project/pkg/quickstarts"
+	"github.com/jenkins-x-plugins/jx-project/pkg/quickstarts"
+	fakejx "github.com/jenkins-x/jx-api/v4/pkg/client/clientset/versioned/fake"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -29,7 +30,7 @@ func TestLoadQuickStartsNoExtensions(t *testing.T) {
 	}
 	o.JXClient = fakejx.NewSimpleClientset()
 
-	model, err := o.LoadQuickStartsModel(nil, false)
+	model, err := o.LoadQuickStartsModel(nil)
 	require.NoError(t, err, "LoadQuickStartsModel")
 
 	assert.True(t, len(model.Quickstarts) > 0, "quickstart model should not be empty")
@@ -50,7 +51,7 @@ func TestLoadLocalExtensionQuickStarts(t *testing.T) {
 	}
 	o.JXClient = fakejx.NewSimpleClientset()
 
-	model, err := o.LoadQuickStartsModel(nil, false)
+	model, err := o.LoadQuickStartsModel(nil)
 	require.NoError(t, err, "LoadQuickStartsModel")
 
 	assert.True(t, len(model.Quickstarts) > 0, "quickstart model should not be empty")

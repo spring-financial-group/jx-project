@@ -2,20 +2,20 @@ package root
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/common"
+	"github.com/jenkins-x-plugins/jx-project/pkg/cmd/importcmd"
+	"github.com/jenkins-x-plugins/jx-project/pkg/quickstarts"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/cobras/helper"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/files"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient"
-	"github.com/jenkins-x/jx-helpers/v3/pkg/gitclient/giturl"
 	"github.com/jenkins-x/jx-helpers/v3/pkg/options"
-	"github.com/jenkins-x/jx-project/pkg/cmd/common"
-	"github.com/jenkins-x/jx-project/pkg/cmd/importcmd"
-	"github.com/jenkins-x/jx-project/pkg/quickstarts"
+	"github.com/jenkins-x/jx-helpers/v3/pkg/termcolor"
 	"github.com/pkg/errors"
 
 	"github.com/jenkins-x/jx-logging/v3/pkg/log"
@@ -25,13 +25,15 @@ import (
 )
 
 var (
+	info = termcolor.ColorInfo
+
 	createQuickstartLong = templates.LongDesc(`
 		Create a new project from a sample/starter (found in https://github.com/jenkins-x-quickstarts)
 
 		This will create a new project for you from the selected template.
 		It will exclude any work-in-progress repos (containing the "WIP-" pattern)
 
-		For more documentation see: [https://jenkins-x.io/developing/create-quickstart/](https://jenkins-x.io/developing/create-quickstart/)
+		For more documentation see: https://jenkins-x.io/v3/develop/create-project/
 `)
 
 	createQuickstartExample = templates.Examples(`
@@ -50,7 +52,7 @@ type CreateQuickstartOptions struct {
 	GitHubOrganisations []string
 	Filter              quickstarts.QuickstartFilter
 	GitHost             string
-	IgnoreTeam          bool
+	QuickstartAuth      string
 }
 
 // NewCmdCreateQuickstart creates a command object for the "create" command
@@ -63,7 +65,7 @@ func NewCmdCreateQuickstart() (*cobra.Command, *CreateQuickstartOptions) {
 		Long:    createQuickstartLong,
 		Example: fmt.Sprintf(createQuickstartExample, common.BinaryName, common.BinaryName),
 		Aliases: []string{"arch"},
-		Run: func(cmd *cobra.Command, args []string) {
+		Run: func(_ *cobra.Command, args []string) {
 			o.Args = args
 			err := o.Run()
 			helper.CheckErr(err)
@@ -73,6 +75,7 @@ func NewCmdCreateQuickstart() (*cobra.Command, *CreateQuickstartOptions) {
 
 	cmd.Flags().StringArrayVarP(&o.GitHubOrganisations, "organisations", "g", []string{}, "The GitHub organisations to query for quickstarts")
 	cmd.Flags().StringArrayVarP(&o.Filter.Tags, "tag", "t", []string{}, "The tags on the quickstarts to filter")
+	cmd.Flags().StringVarP(&o.QuickstartAuth, "quickstart-auth", "", "", "The auth mechanism used to authenticate with the git token to download the quickstarts. If not specified defaults to Basic but could be Bearer for bearer token auth")
 	cmd.Flags().StringVarP(&o.Filter.Owner, "owner", "", "", "The owner to filter on")
 	cmd.Flags().StringVarP(&o.Filter.Language, "language", "l", "", "The language to filter on")
 	cmd.Flags().StringVarP(&o.Filter.Framework, "framework", "", "", "The framework to filter on")
@@ -115,7 +118,7 @@ func (o *CreateQuickstartOptions) Run() error {
 		JXClient:    o.JXClient,
 		ScmClient:   o.ScmFactory.ScmClient,
 	}
-	model, err := qo.LoadQuickStartsModel(o.GitHubOrganisations, o.IgnoreTeam)
+	model, err := qo.LoadQuickStartsModel(o.GitHubOrganisations)
 	if err != nil {
 		return fmt.Errorf("failed to load quickstarts: %s", err)
 	}
@@ -203,10 +206,6 @@ func (o *CreateQuickstartOptions) CreateQuickStart(q *quickstarts.QuickstartForm
 	// Prevent accidental attempts to use ML Project Sets in create quickstart
 	gitToken := o.ScmFactory.GitToken
 
-	// lets not pass in a token if we are not using github
-	if !strings.HasPrefix(o.ScmFactory.GitServerURL, giturl.GitHubURL) {
-		gitToken = ""
-	}
 	if isMLProjectSet(q.Quickstart, currentUser, gitToken) {
 		return fmt.Errorf("you have tried to select a machine-learning quickstart projectset please try again using jx create mlquickstart instead")
 	}
@@ -278,25 +277,48 @@ func (o *CreateQuickstartOptions) createQuickstart(f *quickstarts.QuickstartForm
 		return answer, err
 	}
 
-	if token != "" && username != "" {
-		log.Logger().Debugf("Downloading Quickstart source zip from %s with basic auth for user: %s", u, username)
-		req.SetBasicAuth(username, token)
+	// let's not pass in a token if we are not using a similar service (e.g. github.com or mygitserver.com)
+	sameDomain, err := SameRootDomain(o.ScmFactory.GitServerURL, u)
+	if err != nil {
+		return answer, errors.Wrapf(err, "failed to compare domains")
 	}
+
+	if !sameDomain {
+		log.Logger().Infof("not sending git token to download quickstart from %s as its using a different domain to the git token", info(u))
+		token = ""
+	}
+
+	if token != "" {
+		auth := o.QuickstartAuth
+		lowerAuth := strings.ToLower(auth)
+		if lowerAuth == "" || lowerAuth == "basic" {
+			if username != "" {
+				log.Logger().Debugf("Downloading Quickstart source zip from %s with basic auth for user: %s", u, username)
+				req.SetBasicAuth(username, token)
+			}
+		} else {
+			log.Logger().Debugf("Downloading Quickstart source zip from %s with auth: %s", u, auth)
+			header := auth + " " + token
+			req.Header.Add("Authorization", header)
+		}
+	}
+
 	res, err := client.Do(req)
 	if err != nil {
 		return answer, err
 	}
-	body, err := ioutil.ReadAll(res.Body)
+	defer res.Body.Close()
+	body, err := io.ReadAll(res.Body)
 	if err != nil {
 		return answer, err
 	}
 
 	zipFile := filepath.Join(dir, "source.zip")
-	err = ioutil.WriteFile(zipFile, body, files.DefaultFileWritePermissions)
+	err = os.WriteFile(zipFile, body, files.DefaultFileWritePermissions)
 	if err != nil {
 		return answer, fmt.Errorf("failed to download file %s due to %s", zipFile, err)
 	}
-	tmpDir, err := ioutil.TempDir("", "jx-source-")
+	tmpDir, err := os.MkdirTemp("", "jx-source-")
 	if err != nil {
 		return answer, fmt.Errorf("failed to create temporary directory: %s", err)
 	}
@@ -321,11 +343,11 @@ func (o *CreateQuickstartOptions) createQuickstart(f *quickstarts.QuickstartForm
 }
 
 func findFirstDirectory(dir string) (string, error) {
-	files, err := ioutil.ReadDir(dir)
+	fileList, err := os.ReadDir(dir)
 	if err != nil {
 		return dir, err
 	}
-	for _, f := range files {
+	for _, f := range fileList {
 		if f.IsDir() {
 			return filepath.Join(dir, f.Name()), nil
 		}
@@ -355,7 +377,8 @@ func isMLProjectSet(q *quickstarts.Quickstart, username, token string) bool {
 	if err != nil {
 		return false
 	}
-	bodybytes, err := ioutil.ReadAll(res.Body)
+	defer res.Body.Close()
+	bodybytes, err := io.ReadAll(res.Body)
 	if err != nil {
 		log.Logger().Warnf("Problem parsing response body from %s: %s ", u, err)
 		return false
